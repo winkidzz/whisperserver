@@ -1,5 +1,5 @@
 # GitLab CI/CD Pipeline for WhisperCapRover Server
-# Automatically deploys to CapRover when code is pushed to main branch
+# Automatically deploys to CapRover when code is pushed to main branch 
 
 stages:
   - test
