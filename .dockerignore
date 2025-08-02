@@ -1,86 +1,77 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
+# Git files
+.git
+.gitignore
+.gitlab-ci.yml
+
+# Python cache and build files
+__pycache__
+*.pyc
+*.pyo
+*.pyd
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
+env
+pip-log.txt
+pip-delete-this-directory.txt
+.tox
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.git
+.mypy_cache
+.pytest_cache
+.hypothesis
 
 # Virtual environments
 venv/
 env/
 ENV/
-.venv/
-.venv_realtime/
+env.bak/
+venv.bak/
 
-# IDE
+# IDE files
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
 
-# OS
+# OS files
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
 
-# Logs
-*.log
-logs/
-
-# Git
-.git/
-.gitignore
+# Docker files
+Dockerfile*
+docker-compose*
+.dockerignore
 
 # Documentation
 README.md
 *.md
+docs/
 
 # Test files
+tests/
 test_*
 *_test.py
 
-# Audio files (large)
-*.wav
-*.mp3
-*.flac
-*.m4a
-*.aac
-
-# Model files (very large)
-*.bin
-*.safetensors
-models/
-cache/
+# Logs
+logs/
+*.log
 
 # Temporary files
-*.tmp
-*.temp
-temp/
 tmp/
+temp/
+*.tmp
 
-# Coverage reports
-htmlcov/
-.coverage
-.pytest_cache/
-
-# Jupyter
-.ipynb_checkpoints
-
-# Docker
-Dockerfile*
-docker-compose*
-.dockerignore 
+# Cache directories
+.pip-cache/
+.cache/ 

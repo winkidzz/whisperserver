@@ -95,4 +95,14 @@ Environment variables:
 
 ## 🔗 Integration
 
-This server is designed to work with the `whispercaprover-client` for complete real-time transcription solutions. 
+This server is designed to work with the `whispercaprover-client` for complete real-time transcription solutions.
+
+## 🔄 CI/CD Pipeline
+
+This project includes automated CI/CD pipeline that:
+- **Tests** the application on every push to main branch
+- **Deploys** automatically to CapRover when tests pass
+- **Optimizes** build times with intelligent caching
+- **Monitors** deployment health and provides feedback
+
+**Last Updated:** 2024-12-30 - Added CI/CD pipeline documentation 

@@ -9,23 +9,53 @@ variables:
   CAPROVER_URL: "https://captain.ishworks.website"
   CAPROVER_TOKEN: "718dbed697631ee134cfa77f2628917deaeeb72a750f063a1c08e145d29fb19d"
   APP_NAME: "whispercaprover"
+  # Python caching optimization
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.pip-cache"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PIP_NO_CACHE_DIR: "false"
 
-# Test stage - validate the code
+# Test stage - validate the code with optimized caching
 test:
   stage: test
   image: python:3.9-slim
   tags:
     - shared
   before_script:
-    - pip install -r requirements.txt
+    # Install system dependencies for PyAudio and other audio libraries
+    - apt-get update && apt-get install -y \
+        portaudio19-dev \
+        python3-dev \
+        build-essential \
+        libasound2-dev \
+        libportaudio2 \
+        libportaudiocpp0 \
+        ffmpeg \
+        && rm -rf /var/lib/apt/lists/*
+    # Install Python packages with optimized caching
+    - pip install --cache-dir $PIP_CACHE_DIR --upgrade pip
+    - pip install --cache-dir $PIP_CACHE_DIR -r requirements.txt
   script:
     - python -c "import server; print('✅ Server imports successfully')"
     - python -c "import fastapi; print('✅ FastAPI available')"
     - python -c "import websockets; print('✅ WebSockets available')"
     - python -c "import whisper; print('✅ Whisper available')"
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"
+    - python -c "import pyaudio; print('✅ PyAudio available')"
+  # Optimized caching strategy
+  cache:
+    key: 
+      files:
+        - requirements.txt
+    paths:
+      - .pip-cache/
+      - ~/.cache/pip/
+    policy: pull-push
+  artifacts:
+    reports:
+      junit: test-results.xml
+    expire_in: 1 week
+  only:
+    - main
+    - merge_requests
 
 # Deploy to CapRover using GitLab's built-in integration
 deploy:
@@ -77,8 +107,8 @@ deploy:
         echo "📋 Check logs at: $CAPROVER_URL"
         exit 1
       fi
-  rules:
-    - if: $CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"
+  only:
+    - main
   environment:
     name: production
     url: https://captain.ishworks.website/whispercaprover
