@@ -17,7 +17,7 @@ variables:
 # Test stage - validate the code with optimized caching
 test:
   stage: test
-  image: python:3.9-slim
+  image: python:3.9
   tags:
     - shared
   before_script:
@@ -35,10 +35,15 @@ test:
         ffmpeg \
         pkg-config \
         && rm -rf /var/lib/apt/lists/*
+    # Verify gcc is installed and available
+    - which gcc
+    - gcc --version
     # Install Python packages with optimized caching
     - pip install --cache-dir $PIP_CACHE_DIR --upgrade pip
-    # Try to install PyAudio separately first, then the rest
-    - pip install --cache-dir $PIP_CACHE_DIR PyAudio || echo "PyAudio installation failed, continuing with other packages"
+    # Try to install PyAudio using alternative methods
+    - pip install --cache-dir $PIP_CACHE_DIR --only-binary=all PyAudio || \
+      pip install --cache-dir $PIP_CACHE_DIR PyAudio || \
+      echo "PyAudio installation failed, continuing with other packages"
     - pip install --cache-dir $PIP_CACHE_DIR -r requirements.txt
   script:
     - python -c "import server; print('✅ Server imports successfully')"
