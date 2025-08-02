@@ -1,0 +1,45 @@
+# Optimized Dockerfile for WhisperCapRover with Python caching
+FROM python:3.9-slim
+
+# Install system dependencies first (cached layer)
+RUN apt-get update && apt-get install -y \
+    portaudio19-dev \
+    python3-dev \
+    build-essential \
+    libasound2-dev \
+    libportaudio2 \
+    libportaudiocpp0 \
+    ffmpeg \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set Python caching environment
+ENV PIP_CACHE_DIR=/root/.cache/pip
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1
+ENV PIP_NO_CACHE_DIR=false
+
+# Copy requirements first (cached layer)
+COPY requirements.txt .
+
+# Install Python dependencies (cached layer)
+RUN pip install --cache-dir $PIP_CACHE_DIR --upgrade pip && \
+    pip install --cache-dir $PIP_CACHE_DIR -r requirements.txt
+
+# Set working directory
+WORKDIR /app
+
+# Copy application code (changes frequently)
+COPY . .
+
+# Create cache directory for persistence
+RUN mkdir -p /root/.cache/pip
+
+# Expose port
+EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Run the application
+CMD ["python", "server.py"] 
