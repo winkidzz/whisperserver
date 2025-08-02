@@ -24,6 +24,7 @@ test:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"
+    - if: $CI_COMMIT_BRANCH == "feature/test-pipeline" && $CI_PIPELINE_SOURCE == "push"
 
 # Deploy to CapRover using GitLab's built-in integration
 deploy:
@@ -75,6 +76,7 @@ deploy:
       fi
   rules:
     - if: $CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"
+    - if: $CI_COMMIT_BRANCH == "feature/test-pipeline" && $CI_PIPELINE_SOURCE == "push"
   environment:
     name: production
     url: https://captain.ishworks.website/whispercaprover
