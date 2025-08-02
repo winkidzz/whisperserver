@@ -1,0 +1,82 @@
+# GitLab CI/CD Pipeline for WhisperCapRover Server
+# Automatically deploys to CapRover when code is pushed to main branch
+
+stages:
+  - test
+  - deploy
+
+variables:
+  CAPROVER_URL: "https://captain.ishworks.website"
+  CAPROVER_TOKEN: "718dbed697631ee134cfa77f2628917deaeeb72a750f063a1c08e145d29fb19d"
+  APP_NAME: "whispercaprover"
+
+# Test stage - validate the code
+test:
+  stage: test
+  image: python:3.9-slim
+  before_script:
+    - pip install -r requirements.txt
+  script:
+    - python -c "import server; print('✅ Server imports successfully')"
+    - python -c "import fastapi; print('✅ FastAPI available')"
+    - python -c "import websockets; print('✅ WebSockets available')"
+    - python -c "import whisper; print('✅ Whisper available')"
+  only:
+    - main
+    - merge_requests
+
+# Deploy to CapRover using GitLab's built-in integration
+deploy:
+  stage: deploy
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache curl
+  script:
+    # Deploy using CapRover API
+    - |
+      echo "🚀 Deploying to CapRover..."
+      response=$(curl -s -w "%{http_code}" -X POST \
+        -H "X-Captain-Token: $CAPROVER_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d '{
+          "appName": "'$APP_NAME'",
+          "gitHash": "'$CI_COMMIT_SHA'",
+          "tarFile": null,
+          "gitBranch": "main"
+        }' \
+        "$CAPROVER_URL/api/v2/user/apps/deployapp")
+      
+      http_code="${response: -3}"
+      body="${response%???}"
+      
+      echo "Response: $body"
+      echo "HTTP Code: $http_code"
+      
+      if [ "$http_code" = "200" ]; then
+        echo "✅ Deployment initiated successfully!"
+      else
+        echo "❌ Deployment failed with HTTP code: $http_code"
+        exit 1
+      fi
+    
+    # Wait and check health
+    - |
+      echo "⏳ Waiting for deployment to complete..."
+      sleep 90
+      
+      echo "🏥 Performing health check..."
+      if curl -f "$CAPROVER_URL/$APP_NAME/health" > /dev/null 2>&1; then
+        echo "✅ Health check passed! Deployment successful!"
+        echo "🌐 Your app is available at: $CAPROVER_URL/$APP_NAME"
+      else
+        echo "❌ Health check failed"
+        echo "📋 Check logs at: $CAPROVER_URL"
+        exit 1
+      fi
+  only:
+    - main
+  environment:
+    name: production
+    url: https://captain.ishworks.website/whispercaprover
+  when: manual
+  allow_failure: false 
