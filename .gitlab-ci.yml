@@ -23,9 +23,9 @@ test:
     - python -c "import fastapi; print('✅ FastAPI available')"
     - python -c "import websockets; print('✅ WebSockets available')"
     - python -c "import whisper; print('✅ Whisper available')"
-  only:
-    - main
-    - merge_requests
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"
 
 # Deploy to CapRover using GitLab's built-in integration
 deploy:
@@ -77,8 +77,8 @@ deploy:
         echo "📋 Check logs at: $CAPROVER_URL"
         exit 1
       fi
-  only:
-    - main
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"
   environment:
     name: production
     url: https://captain.ishworks.website/whispercaprover
