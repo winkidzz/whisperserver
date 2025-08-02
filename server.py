@@ -26,13 +26,11 @@ import uvicorn
 try:
     from whisper_live.client import TranscriptionClient
     WHISPERLIVE_AVAILABLE = True
-    logging.info("WhisperLive library available - using true streaming")
+    logging.info("WhisperLive library available - streaming transcription enabled")
 except ImportError as e:
     WHISPERLIVE_AVAILABLE = False
-    logging.warning(f"WhisperLive not available: {e} - falling back to standard Whisper")
-
-# Import standard Whisper
-import whisper
+    logging.error(f"WhisperLive library not available: {e}")
+    raise RuntimeError("WhisperLive streaming is required but not available. Please install whisper-live library.")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -67,16 +65,20 @@ class WhisperCapRoverTranscriber:
         self._load_transcriber()
     
     def _load_transcriber(self):
-        """Load the appropriate transcriber."""
+        """Load the WhisperLive transcriber."""
         try:
-            # For now, use standard Whisper since WhisperLive client
-            # is designed for direct usage, not as a library component
-            logger.info(f"Loading standard Whisper model: {self.model_name}")
-            self.transcriber = whisper.load_model(self.model_name)
-            logger.info("Standard Whisper model loaded successfully")
+            logger.info(f"Loading WhisperLive model: {self.model_name}")
+            # Initialize WhisperLive client for real-time transcription
+            self.transcriber = TranscriptionClient(
+                host="localhost",
+                port=6006,
+                model=self.model_name,
+                lang="en"
+            )
+            logger.info("WhisperLive transcriber initialized successfully")
                 
         except Exception as e:
-            logger.error(f"Failed to load transcriber: {e}")
+            logger.error(f"Failed to load WhisperLive transcriber: {e}")
             raise
     
     def add_audio(self, audio_data: bytes):
@@ -101,71 +103,67 @@ class WhisperCapRoverTranscriber:
             self.processing_thread.start()
     
     def _process_audio_stream(self):
-        """Process audio in true streaming mode."""
-        # Use standard Whisper for now
-        self._process_with_standard_whisper()
+        """Process audio stream in background thread using WhisperLive streaming."""
+        if not WHISPERLIVE_AVAILABLE:
+            raise RuntimeError("WhisperLive streaming is required but not available.")
+        self._process_with_whisperlive()
     
     def _process_with_whisperlive(self):
         """Process with WhisperLive for true streaming."""
         try:
-            # Use WhisperLive client directly for streaming
-            # The TranscriptionClient is designed to be called directly
             logger.info("Starting WhisperLive transcription process")
             
-            # For now, fall back to standard Whisper since WhisperLive client
-            # is designed for direct usage, not as a library component
-            logger.warning("WhisperLive client requires direct usage, falling back to standard Whisper")
-            self._process_with_standard_whisper()
+            # Connect to WhisperLive server
+            self.transcriber.connect()
+            
+            while self.is_processing:
+                if len(self.audio_buffer) >= 16000 * 2:  # 2 seconds of audio
+                    try:
+                        # Get audio chunk
+                        audio_chunk = np.array(list(self.audio_buffer)[-16000 * 2:])
+                        
+                        # Send audio to WhisperLive server
+                        start_time = time.time()
+                        result = self.transcriber.transcribe(audio_chunk)
+                        processing_time = time.time() - start_time
+                        
+                        if result and result.text.strip():
+                            text = result.text.strip()
+                            
+                            # Check if this is new content
+                            if text != self.last_transcription:
+                                # Create result
+                                transcription = StreamingTranscriptionResult(
+                                    text=text,
+                                    is_final=result.is_final,
+                                    confidence=result.confidence if hasattr(result, 'confidence') else 0.95,
+                                    language=result.language if hasattr(result, 'language') else "en",
+                                    processing_time=processing_time,
+                                    timestamp=time.time(),
+                                    partial=not result.is_final
+                                )
+                                
+                                # Add to result queue
+                                self.result_queue.put(transcription)
+                                
+                                # Update last transcription
+                                self.last_transcription = text
+                                
+                                logger.info(f"WhisperLive: '{text}' (final: {result.is_final}, time: {processing_time:.2f}s)")
+                        
+                    except Exception as e:
+                        logger.error(f"Error in WhisperLive processing: {e}")
+                    
+                    # Delay for streaming processing
+                    time.sleep(0.1)
+                else:
+                    time.sleep(0.05)
                     
         except Exception as e:
             logger.error(f"Error in WhisperLive streaming: {e}")
-            # Fall back to standard Whisper
-            self._process_with_standard_whisper()
+            raise RuntimeError(f"WhisperLive streaming failed: {e}")
     
-    def _process_with_standard_whisper(self):
-        """Fallback to standard Whisper processing."""
-        while self.is_processing:
-            if len(self.audio_buffer) >= 16000 * 2:  # 2 seconds for fallback
-                try:
-                    # Get audio chunk
-                    audio_chunk = np.array(list(self.audio_buffer)[-16000 * 2:])
-                    
-                    # Process with standard Whisper
-                    start_time = time.time()
-                    result = self.transcriber.transcribe(audio_chunk, language="en")
-                    processing_time = time.time() - start_time
-                    
-                    if result and result["text"].strip():
-                        text = result["text"].strip()
-                        
-                        # Check if this is new content
-                        if text != self.last_transcription:
-                            # Create result
-                            transcription = StreamingTranscriptionResult(
-                                text=text,
-                                is_final=True,
-                                confidence=result.get("confidence", 0.95),
-                                language=result.get("language", "en"),
-                                processing_time=processing_time,
-                                timestamp=time.time(),
-                                partial=False
-                            )
-                            
-                            # Add to result queue
-                            self.result_queue.put(transcription)
-                            
-                            # Update last transcription
-                            self.last_transcription = text
-                            
-                            logger.info(f"Standard: '{text}' (time: {processing_time:.2f}s)")
-                    
-                except Exception as e:
-                    logger.error(f"Error processing audio: {e}")
-                
-                # Delay for standard processing
-                time.sleep(0.3)
-            else:
-                time.sleep(0.1)
+
     
     def get_results(self) -> list:
         """Get all available transcription results."""
@@ -207,7 +205,8 @@ class WhisperCapRoverServer:
                 "timestamp": time.time(),
                 "service": "whispercaprover-server",
                 "model": os.getenv("WHISPER_MODEL", "base"),
-                "whisperlive_available": WHISPERLIVE_AVAILABLE,
+                "streaming_enabled": True,
+                "streaming_type": "word-by-word",
                 "active_sessions": len(self.active_sessions),
                 "version": "1.0.0"
             })
@@ -218,8 +217,9 @@ class WhisperCapRoverServer:
             return JSONResponse({
                 "service": "WhisperCapRover Server",
                 "version": "1.0.0",
-                "description": "Real-time audio transcription using WhisperLive",
-                "streaming_type": "word-by-word" if WHISPERLIVE_AVAILABLE else "chunk-based",
+                "description": "Real-time audio transcription using WhisperLive streaming",
+                "streaming_type": "word-by-word",
+                "streaming_required": True,
                 "endpoints": {
                     "websocket": "/transcribe",
                     "health": "/health",
@@ -256,7 +256,7 @@ class WhisperCapRoverServer:
                 "type": "connection_established",
                 "session_id": session_id,
                 "message": "Connected to WhisperCapRover Server",
-                "streaming_type": "word-by-word" if WHISPERLIVE_AVAILABLE else "chunk-based"
+                "streaming_type": "word-by-word"
             }
             await websocket.send_text(json.dumps(welcome_msg))
             
@@ -305,7 +305,7 @@ class WhisperCapRoverServer:
             "type": "session_started",
             "session_id": session_id,
             "timestamp": time.time(),
-            "streaming_type": "word-by-word" if WHISPERLIVE_AVAILABLE else "chunk-based"
+            "streaming_type": "word-by-word"
         }
         await self.active_sessions[session_id]["websocket"].send_text(json.dumps(response))
     
@@ -381,13 +381,17 @@ def main():
     if log_level not in valid_levels:
         log_level = "info"
     
+    # Verify WhisperLive is available before starting
+    if not WHISPERLIVE_AVAILABLE:
+        raise RuntimeError("WhisperLive streaming is required but not available. Cannot start server.")
+    
     # Create server
     server = WhisperCapRoverServer()
     server.initialize_transcriber()
     
     # Start FastAPI server
     logger.info(f"Starting WhisperCapRover Server on {host}:{port}")
-    logger.info(f"WhisperLive available: {WHISPERLIVE_AVAILABLE}")
+    logger.info("WhisperLive streaming enabled - word-by-word transcription")
     uvicorn.run(
         server.app,
         host=host,

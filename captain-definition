@@ -1,9 +1,9 @@
 {
   "schemaVersion": 2,
-  "dockerfilePath": "./Dockerfile",
+  "imageName": "ishworksregistry.captain.ishworks.website/whispercaprover:latest",
   "expose": [
     {
-      "httpPort": 8000,
+      "httpPort": 80,
       "httpsPort": 443
     }
   ],
@@ -41,6 +41,7 @@
     ]
   },
   "notExposeAsWebApp": false,
-  "containerHttpPort": "8000",
+  "hasDefaultSubdomainSsl": true,
+  "containerHttpPort": "80",
   "description": "Real-time audio transcription server using OpenAI Whisper with WebSocket streaming"
 } 

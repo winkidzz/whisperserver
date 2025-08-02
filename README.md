@@ -1,9 +1,10 @@
 # WhisperCapRover Server
 
-Real-time audio transcription server using WhisperLive for true streaming with word-by-word output.
+Real-time audio transcription server using WhisperLive for **streaming-only** word-by-word transcription. This server requires WhisperLive streaming and will not start without it.
 
 ## 🚀 Features
 
+- **Streaming-Only**: **Requires** WhisperLive streaming - no fallback options
 - **True Real-time Streaming**: Word-by-word transcription as you speak
 - **Low Latency**: 200-800ms expected latency
 - **WebSocket API**: Real-time audio streaming
@@ -15,12 +16,15 @@ Real-time audio transcription server using WhisperLive for true streaming with w
 
 ```
 whispercaprover-server/
-├── Dockerfile                 # Production Docker image
-├── captain-definition         # CapRover deployment config
-├── requirements.txt           # Python dependencies
 ├── server.py                  # Main server implementation
+├── requirements.txt           # Python dependencies
+├── Dockerfile.complete        # Production Docker image
+├── captain-definition         # CapRover deployment config
+├── deploy-simple.sh           # Simple deployment script
+├── venv/                      # Virtual environment
 ├── README.md                  # This file
-└── .dockerignore             # Docker ignore file
+├── .dockerignore             # Docker ignore file
+└── .gitignore                # Git ignore file
 ```
 
 ## 🛠️ Quick Start
@@ -34,21 +38,48 @@ whispercaprover-server/
    pip install -r requirements.txt
    ```
 
-2. **Run server:**
+2. **Install dependencies:**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. **Run server:**
    ```bash
    python server.py
    ```
+   
+   **Note:** All dependencies are included in the single requirements.txt file.
 
-3. **Test health endpoint:**
+4. **Test health endpoint:**
    ```bash
    curl http://localhost:8000/health
    ```
 
-### Docker Build
+### 🚀 Simple Docker Deployment
+
+This project uses a **single Dockerfile** for easy deployment:
 
 ```bash
-docker build -t whispercaprover-server .
-docker run -p 8000:8000 whispercaprover-server
+# Build the Docker image
+docker build -f Dockerfile.complete -t whispercaprover-server .
+
+# Run locally
+docker run -p 8000:80 whispercaprover-server
+
+# Deploy to CapRover
+./deploy-simple.sh deploy
+```
+
+**Benefits:**
+- ⚡ **Simple setup** - Single Dockerfile with all dependencies
+- 🎯 **Easy deployment** - One command to deploy
+- 🏠 **Production ready** - Optimized for CapRover deployment
+
+### Alternative: Direct Docker Build
+
+```bash
+docker build -f Dockerfile.complete -t whispercaprover-server .
+docker run -p 8000:80 whispercaprover-server
 ```
 
 ## 🌐 API Endpoints
@@ -97,12 +128,11 @@ Environment variables:
 
 This server is designed to work with the `whispercaprover-client` for complete real-time transcription solutions.
 
-## 🔄 CI/CD Pipeline
+## 🚀 Deployment
 
-This project includes automated CI/CD pipeline that:
-- **Tests** the application on every push to main branch
-- **Deploys** automatically to CapRover when tests pass
-- **Optimizes** build times with intelligent caching
-- **Monitors** deployment health and provides feedback
+This project includes simple deployment options:
+- **Local development** - Run with Python directly
+- **Docker deployment** - Build and run with Docker
+- **CapRover deployment** - Deploy to production with one command
 
-**Last Updated:** 2024-12-30 - Added CI/CD pipeline documentation 
+**Last Updated:** 2024-12-30 - Simplified project structure 
