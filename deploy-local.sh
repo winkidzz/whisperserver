@@ -16,7 +16,17 @@ NC='\033[0m' # No Color
 APP_NAME="whispercaprover-local"
 CAPROVER_URL="https://captain.ishworks.website"
 CAPROVER_TOKEN="718dbed697631ee134cfa77f2628917deaeeb72a750f063a1c08e145d29fb19d"
-REGISTRY="your-registry"  # Change this to your Docker registry
+
+# Registry Configuration - Choose one:
+# Option 1: CapRover built-in registry (if enabled)
+REGISTRY="captain.ishworks.website:996"
+# Option 2: Docker Hub (uncomment and set your username)
+# REGISTRY="docker.io/your-username"
+# Option 3: GitHub Container Registry (uncomment and set your username)
+# REGISTRY="ghcr.io/your-username"
+# Option 4: No registry (local deployment only)
+# REGISTRY="local"
+
 IMAGE_NAME="${REGISTRY}/${APP_NAME}"
 TAG="latest"
 
@@ -70,20 +80,52 @@ build_image() {
     fi
 }
 
-# Push to registry (if using remote registry)
-push_image() {
-    if [ "$REGISTRY" != "your-registry" ]; then
-        print_status "Pushing image to registry..."
-        docker push "${IMAGE_NAME}:${TAG}"
-        
-        if [ $? -eq 0 ]; then
-            print_status "Image pushed successfully!"
-        else
-            print_error "Failed to push image to registry."
-            exit 1
-        fi
+# Login to registry
+login_to_registry() {
+    print_status "Logging into registry: $REGISTRY"
+    
+    if [ "$REGISTRY" = "local" ]; then
+        print_warning "Skipping registry login (using local deployment)"
+        return 0
+    elif [[ "$REGISTRY" == *"captain.ishworks.website"* ]]; then
+        # CapRover built-in registry
+        echo "$CAPROVER_TOKEN" | docker login "$REGISTRY" --username "captain" --password-stdin
+    elif [[ "$REGISTRY" == *"docker.io"* ]]; then
+        # Docker Hub
+        print_warning "Please login to Docker Hub manually: docker login"
+        docker login
+    elif [[ "$REGISTRY" == *"ghcr.io"* ]]; then
+        # GitHub Container Registry
+        print_warning "Please login to GitHub Container Registry manually: echo \$GITHUB_TOKEN | docker login ghcr.io -u USERNAME --password-stdin"
+        echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_USERNAME" --password-stdin
     else
-        print_warning "Skipping registry push (using local image)"
+        print_error "Unknown registry type: $REGISTRY"
+        exit 1
+    fi
+    
+    if [ $? -eq 0 ]; then
+        print_status "Successfully logged into registry!"
+    else
+        print_error "Failed to login to registry."
+        exit 1
+    fi
+}
+
+# Push to registry
+push_image() {
+    if [ "$REGISTRY" = "local" ]; then
+        print_warning "Skipping image push (using local deployment)"
+        return 0
+    fi
+    
+    print_status "Pushing image to registry: ${IMAGE_NAME}:${TAG}"
+    docker push "${IMAGE_NAME}:${TAG}"
+    
+    if [ $? -eq 0 ]; then
+        print_status "Image pushed successfully!"
+    else
+        print_error "Failed to push image to registry."
+        exit 1
     fi
 }
 
@@ -104,14 +146,8 @@ login_to_caprover() {
 deploy_to_caprover() {
     print_status "Deploying to CapRover..."
     
-    if [ "$REGISTRY" != "your-registry" ]; then
-        # Deploy using remote image
-        caprover app deploy --appName "$APP_NAME" --imageName "${IMAGE_NAME}:${TAG}"
-    else
-        # Deploy using local image (requires CapRover to have access to local Docker)
-        print_warning "Deploying local image - ensure CapRover can access your Docker daemon"
-        caprover app deploy --appName "$APP_NAME" --imageName "${IMAGE_NAME}:${TAG}"
-    fi
+    # Deploy using CapRover registry image
+    caprover app deploy --appName "$APP_NAME" --imageName "${IMAGE_NAME}:${TAG}"
     
     if [ $? -eq 0 ]; then
         print_status "App deployment initiated successfully!"
@@ -151,11 +187,13 @@ main() {
         "push")
             check_prerequisites
             build_image
+            login_to_registry
             push_image
             ;;
         "deploy")
             check_prerequisites
             build_image
+            login_to_registry
             push_image
             login_to_caprover
             deploy_to_caprover
@@ -166,6 +204,7 @@ main() {
         "all")
             check_prerequisites
             build_image
+            login_to_registry
             push_image
             login_to_caprover
             deploy_to_caprover
