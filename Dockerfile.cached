@@ -1,0 +1,54 @@
+# Optimized Dockerfile with maximum caching
+# This Dockerfile is designed to cache heavy dependencies and speed up builds
+
+FROM python:3.9-slim as base
+
+# Accept build arguments for cache directories
+ARG PIP_CACHE_DIR=/tmp/pip-cache
+ARG APT_CACHE_DIR=/tmp/apt-cache
+
+# Install system dependencies for PyAudio and other audio libraries
+# Use cache mount for apt cache
+RUN --mount=type=cache,target=/var/cache/apt,id=apt-system-cache \
+    --mount=type=cache,target=/var/lib/apt,id=apt-lib-cache \
+    apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    make \
+    portaudio19-dev \
+    python3-dev \
+    build-essential \
+    libasound2-dev \
+    libportaudio2 \
+    libportaudiocpp0 \
+    ffmpeg \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create a non-root user
+RUN useradd --create-home --shell /bin/bash app
+
+# Set working directory
+WORKDIR /app
+
+# Copy requirements first for better caching
+COPY requirements.txt .
+
+# Install Python packages with optimized caching
+# This layer will be cached unless requirements.txt changes
+# Use cache mount for pip cache
+RUN --mount=type=cache,target=/root/.cache/pip,id=pip-user-cache \
+    pip install --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Switch to non-root user
+USER app
+
+# Copy application code (this layer changes frequently)
+COPY --chown=app:app . .
+
+# Expose port
+EXPOSE 8000
+
+# Default command
+CMD ["python", "server.py"] 

@@ -14,14 +14,14 @@ NC='\033[0m' # No Color
 
 # Configuration
 APP_NAME="whispercaprover-local"
-CAPROVER_URL="https://captain.ishworks.website"
-CAPROVER_TOKEN="718dbed697631ee134cfa77f2628917deaeeb72a750f063a1c08e145d29fb19d"
+CAPROVER_URL="https://captain.captain.ishworks.website"
+CAPROVER_TOKEN="prasanna"
 
 # Registry Configuration - Choose one:
-# Option 1: CapRover built-in registry (if enabled)
-REGISTRY="captain.ishworks.website:996"
-# Option 2: Docker Hub (uncomment and set your username)
-# REGISTRY="docker.io/your-username"
+# Option 1: CapRover built-in registry (recommended)
+REGISTRY="registry.captain.ishworks.website"
+# Option 2: Docker Hub (alternative)
+# REGISTRY="docker.io/sanantha"
 # Option 3: GitHub Container Registry (uncomment and set your username)
 # REGISTRY="ghcr.io/your-username"
 # Option 4: No registry (local deployment only)
@@ -69,8 +69,17 @@ check_prerequisites() {
 build_image() {
     print_status "Building Docker image locally..."
     
-    # Use the production Dockerfile
-    docker build -t "${IMAGE_NAME}:${TAG}" .
+    # Use the cached build script for faster builds
+    if [ -f "./build-simple-cached.sh" ]; then
+        print_status "Using cached build for faster deployment..."
+        ./build-simple-cached.sh build
+        # Tag the cached image with the registry name
+        docker tag "whispercaprover-cached:latest" "${IMAGE_NAME}:${TAG}"
+    else
+        print_warning "Cached build script not found, using standard build..."
+        # Use the production Dockerfile
+        docker build -t "${IMAGE_NAME}:${TAG}" .
+    fi
     
     if [ $? -eq 0 ]; then
         print_status "Docker image built successfully!"

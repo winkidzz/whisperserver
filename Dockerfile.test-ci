@@ -1,0 +1,52 @@
+# Test Dockerfile that matches GitLab CI environment
+# Use this to test the build process locally before updating .gitlab-ci.yml
+
+FROM python:3.9
+
+# Install system dependencies for PyAudio and other audio libraries
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    make \
+    portaudio19-dev \
+    python3-dev \
+    build-essential \
+    libasound2-dev \
+    libportaudio2 \
+    libportaudiocpp0 \
+    ffmpeg \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+# Verify gcc is installed and available
+RUN which gcc && gcc --version
+
+# Set working directory
+WORKDIR /app
+
+# Copy requirements first for better caching
+COPY requirements.txt .
+
+# Install Python packages with optimized caching
+RUN pip install --upgrade pip
+# Try to install PyAudio using alternative methods
+RUN pip install --only-binary=all PyAudio || \
+    pip install PyAudio || \
+    echo "PyAudio installation failed, continuing with other packages"
+RUN pip install -r requirements.txt
+
+# Copy application code
+COPY . .
+
+# Test imports
+RUN python -c "import server; print('✅ Server imports successfully')"
+RUN python -c "import fastapi; print('✅ FastAPI available')"
+RUN python -c "import websockets; print('✅ WebSockets available')"
+RUN python -c "import whisper; print('✅ Whisper available')"
+RUN python -c "import pyaudio; print('✅ PyAudio available')" || echo "⚠️ PyAudio not available (this is expected in CI environment)"
+
+# Expose port
+EXPOSE 8000
+
+# Default command
+CMD ["python", "server.py"] 

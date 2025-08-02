@@ -1,0 +1,48 @@
+# Simple Cached Dockerfile
+# This Dockerfile maximizes Docker layer caching for faster builds
+
+FROM python:3.9-slim
+
+# Install system dependencies for PyAudio and other audio libraries
+# This layer will be cached unless we change the package list
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    make \
+    portaudio19-dev \
+    python3-dev \
+    build-essential \
+    libasound2-dev \
+    libportaudio2 \
+    libportaudiocpp0 \
+    ffmpeg \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create a non-root user
+RUN useradd --create-home --shell /bin/bash app
+
+# Set working directory
+WORKDIR /app
+
+# Copy requirements first for better caching
+# This layer will be cached unless requirements.txt changes
+COPY requirements.txt .
+
+# Install Python packages with optimized caching
+# This layer will be cached unless requirements.txt changes
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Switch to non-root user
+USER app
+
+# Copy application code (this layer changes frequently)
+# This layer will be rebuilt every time you change your code
+COPY --chown=app:app . .
+
+# Expose port
+EXPOSE 8000
+
+# Default command
+CMD ["python", "server.py"] 

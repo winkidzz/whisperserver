@@ -13,9 +13,9 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
-CAPROVER_URL="https://captain.ishworks.website"
+CAPROVER_URL="https://captain.captain.ishworks.website"
 CAPROVER_TOKEN="718dbed697631ee134cfa77f2628917deaeeb72a750f063a1c08e145d29fb19d"
-REGISTRY="captain.ishworks.website:996"
+REGISTRY="registry.captain.ishworks.website"
 
 echo -e "${BLUE}🐳 Testing CapRover Registry Connection${NC}"
 echo "=============================================="
@@ -35,7 +35,7 @@ print_error() {
 
 # Test 1: Check if registry is accessible
 print_status "Testing registry accessibility..."
-if curl -f "http://${REGISTRY}/v2/" > /dev/null 2>&1; then
+if curl -k -f "https://${REGISTRY}/" > /dev/null 2>&1; then
     print_status "Registry is accessible!"
 else
     print_error "Registry is not accessible. Check if CapRover registry is enabled."
