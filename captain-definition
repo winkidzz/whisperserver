@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 2,
+  "dockerfilePath": "./Dockerfile",
+  "expose": [
+    {
+      "httpPort": 8000,
+      "httpsPort": 443
+    }
+  ],
+  "environmentVariables": {
+    "WHISPER_MODEL": "base",
+    "HOST": "0.0.0.0",
+    "PORT": "8000",
+    "LOG_LEVEL": "info",
+    "MAX_CONNECTIONS": "10",
+    "WHISPER_CACHE_DIR": "/app/cache"
+  },
+  "caproverOneClickApp": {
+    "displayName": "WhisperCapRover Server",
+    "description": "Real-time audio transcription server with low latency streaming",
+    "repository": {
+      "url": "https://gitlab.captain.ishworks.website/audio/whispercaprover.git",
+      "branch": "main"
+    },
+    "variables": [
+      {
+        "key": "WHISPER_MODEL",
+        "value": "base",
+        "description": "Whisper model size (tiny, base, small, medium, large)"
+      },
+      {
+        "key": "MAX_CONNECTIONS",
+        "value": "10",
+        "description": "Maximum concurrent WebSocket connections"
+      },
+      {
+        "key": "LOG_LEVEL",
+        "value": "info",
+        "description": "Logging level (debug, info, warning, error)"
+      }
+    ]
+  },
+  "notExposeAsWebApp": false,
+  "containerHttpPort": "8000",
+  "description": "Real-time audio transcription server using OpenAI Whisper with WebSocket streaming"
+} 

@@ -1,0 +1,17 @@
+# Core dependencies for real-time streaming
+websockets>=11.0
+numpy>=1.21.0
+soundfile>=0.12.0
+
+# FastAPI for CapRover deployment
+fastapi>=0.100.0
+uvicorn[standard]>=0.20.0
+
+# Real-time streaming with WhisperLive
+whisper-live>=0.1.0
+
+# Audio processing
+librosa>=0.9.0
+
+# Additional utilities
+aiohttp>=3.8.0 
