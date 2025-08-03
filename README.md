@@ -97,11 +97,12 @@ WebSocket Response
 whispercaprover-server/
 ├── server.py                    # Main FastAPI server
 ├── requirements.txt             # Python dependencies
-├── test_vad_bypass.py          # Test script for audio transcription
-├── recording_20250802_193938.wav # Test audio file
-├── logs/                       # Server logs directory
-├── venv/                       # Virtual environment
-└── README.md                   # This documentation
+├── captain-definition           # CapRover deployment config
+├── Dockerfile.complete          # Docker configuration
+├── deploy-simple.sh             # Deployment script
+├── .dockerignore                # Docker ignore file
+├── logs/                        # Server logs directory
+└── README.md                    # This documentation
 ```
 
 ## 🔧 **Configuration**
@@ -130,16 +131,7 @@ export PORT=8000
 
 ## 🧪 **Testing**
 
-### **1. Basic Functionality Test**
-```bash
-# Start server
-python server.py
-
-# In another terminal, run test
-python test_vad_bypass.py
-```
-
-### **2. WebSocket Health Check**
+### **1. WebSocket Health Check**
 ```bash
 curl http://localhost:8000/health
 ```
@@ -148,26 +140,29 @@ curl http://localhost:8000/health
 {"status":"healthy","service":"whispercaprover"}
 ```
 
-### **3. Browser Test**
+### **2. Browser Test**
 1. Open browser to: `http://localhost:8000/html`
 2. Allow microphone access
 3. Speak into microphone
 4. View real-time transcription
 
-### **4. Custom Audio Test**
+### **3. Manual WebSocket Test**
 ```bash
-# Test with your own WAV file
-python test_vad_bypass.py --file your_audio.wav
+# Start server
+python server.py
+
+# Use a WebSocket client to connect to ws://localhost:8000/ws/audio
+# Send raw PCM audio bytes (16kHz, 16-bit, mono)
 ```
 
 ## 📊 **Performance Metrics**
 
 ### **Tested Performance**
-- **Audio File:** `recording_20250802_193938.wav` (159,744 bytes)
 - **Processing Time:** ~350ms for full transcription
 - **Memory Usage:** ~1GB with base model
-- **Accuracy:** 100% for test audio
+- **Accuracy:** High accuracy with base model
 - **Latency:** Real-time streaming
+- **Sample Rate:** 16kHz, 16-bit PCM, mono
 
 ### **System Requirements**
 - **RAM:** Minimum 2GB, Recommended 4GB+
@@ -259,6 +254,21 @@ Raw PCM audio bytes (16kHz, 16-bit, mono)
 
 ## 🚀 **Deployment**
 
+### **Docker Build**
+```bash
+# Build Docker image
+docker build -f Dockerfile.complete -t whispercaprover .
+
+# Run container locally
+docker run -p 8000:8000 whispercaprover
+```
+
+### **CapRover Deployment**
+```bash
+# Deploy to CapRover
+./deploy-simple.sh
+```
+
 ### **Local Development**
 ```bash
 # Clone repository
@@ -272,20 +282,6 @@ pip install -r requirements.txt
 
 # Start server
 python server.py
-```
-
-### **Production Deployment**
-```bash
-# Using systemd (Linux)
-sudo systemctl enable whispercaprover
-sudo systemctl start whispercaprover
-
-# Using Docker
-docker build -t whispercaprover .
-docker run -p 8000:8000 whispercaprover
-
-# Using CapRover
-./deploy-simple.sh
 ```
 
 ## 📝 **Logs & Monitoring**
