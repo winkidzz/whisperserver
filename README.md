@@ -1,138 +1,234 @@
 # WhisperCapRover Server
 
-Real-time audio transcription server using WhisperLive for **streaming-only** word-by-word transcription. This server requires WhisperLive streaming and will not start without it.
+Real-time audio transcription server using WhisperLiveKit for streaming voice-to-text conversion.
 
-## 🚀 Features
+## Features
 
-- **Streaming-Only**: **Requires** WhisperLive streaming - no fallback options
-- **True Real-time Streaming**: Word-by-word transcription as you speak
-- **Low Latency**: 200-800ms expected latency
-- **WebSocket API**: Real-time audio streaming
-- **CapRover Ready**: Production deployment configuration
-- **Health Checks**: Built-in monitoring endpoints
-- **Multiple Models**: Support for different Whisper model sizes
+- **Real-time streaming transcription** using WhisperLiveKit
+- **WebSocket-based communication** for low-latency audio streaming
+- **Speaker diarization** support (optional)
+- **Multiple language support** via Whisper models
+- **CapRover deployment ready** with Docker support
+- **Async processing** for optimal performance
 
-## 📁 Project Structure
+## Architecture
 
-```
-whispercaprover-server/
-├── server.py                  # Main server implementation
-├── requirements.txt           # Python dependencies
-├── Dockerfile.complete        # Production Docker image
-├── captain-definition         # CapRover deployment config
-├── deploy-simple.sh           # Simple deployment script
-├── venv/                      # Virtual environment
-├── README.md                  # This file
-├── .dockerignore             # Docker ignore file
-└── .gitignore                # Git ignore file
-```
+The server uses WhisperLiveKit's streaming API to provide real-time transcription:
 
-## 🛠️ Quick Start
+1. **WebSocket Connection**: Clients connect via WebSocket to `/transcribe`
+2. **Audio Streaming**: Raw audio bytes are streamed directly to the server
+3. **Real-time Processing**: WhisperLiveKit processes audio chunks asynchronously
+4. **Live Results**: Transcription results are sent back to clients in real-time
 
-### Local Development
+## Installation
 
-1. **Create virtual environment:**
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate
-   pip install -r requirements.txt
-   ```
+### Prerequisites
 
-2. **Install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
+- Python 3.8+
+- FFmpeg (for audio processing)
 
-3. **Run server:**
-   ```bash
-   python server.py
-   ```
-   
-   **Note:** All dependencies are included in the single requirements.txt file.
-
-4. **Test health endpoint:**
-   ```bash
-   curl http://localhost:8000/health
-   ```
-
-### 🚀 Simple Docker Deployment
-
-This project uses a **single Dockerfile** for easy deployment:
+### Install FFmpeg
 
 ```bash
-# Build the Docker image
-docker build -f Dockerfile.complete -t whispercaprover-server .
+# Ubuntu/Debian
+sudo apt install ffmpeg
 
-# Run locally
-docker run -p 8000:80 whispercaprover-server
+# macOS
+brew install ffmpeg
 
-# Deploy to CapRover
-./deploy-simple.sh deploy
+# Windows
+# Download from https://ffmpeg.org/download.html and add to PATH
 ```
 
-**Benefits:**
-- ⚡ **Simple setup** - Single Dockerfile with all dependencies
-- 🎯 **Easy deployment** - One command to deploy
-- 🏠 **Production ready** - Optimized for CapRover deployment
-
-### Alternative: Direct Docker Build
+### Install Dependencies
 
 ```bash
-docker build -f Dockerfile.complete -t whispercaprover-server .
-docker run -p 8000:80 whispercaprover-server
+pip install -r requirements.txt
 ```
 
-## 🌐 API Endpoints
+### Optional Dependencies
 
-### Health Check
-- **GET** `/health` - Server health status
-- **Response:** JSON with service status and metrics
+For enhanced functionality:
 
-### Root Info
-- **GET** `/` - Service information
-- **Response:** JSON with service details and endpoints
+```bash
+# Speaker diarization
+pip install diart
 
-### WebSocket Transcription
-- **WebSocket** `/transcribe` - Real-time audio transcription
-- **Protocol:** WebSocket with JSON messages
+# Voice Activity Controller
+pip install torch
 
-## 🔧 Configuration
+# Sentence-based buffer trimming
+pip install mosestokenizer wtpsplit
+```
 
-Environment variables:
-- `WHISPER_MODEL`: Whisper model size (default: "base")
-- `HOST`: Server host (default: "0.0.0.0")
-- `PORT`: Server port (default: 8000)
-- `LOG_LEVEL`: Logging level (default: "info")
+## Usage
 
-## 🚀 CapRover Deployment
+### Start the Server
 
-1. **One-Click Deploy:**
-   - Use the `captain-definition` file
-   - Deploy directly to CapRover
+```bash
+python server.py
+```
 
-2. **Manual Deploy:**
+The server will start on `localhost:8000` by default.
+
+### Environment Variables
+
+- `HOST`: Server host (default: `0.0.0.0`)
+- `PORT`: Server port (default: `8000`)
+- `WHISPER_MODEL`: Whisper model size (default: `base`)
+- `WHISPER_LANGUAGE`: Source language (default: `en`)
+- `WHISPER_DIARIZATION`: Enable speaker diarization (default: `false`)
+- `LOG_LEVEL`: Logging level (default: `info`)
+
+### Test the Server
+
+```bash
+# Test without microphone
+python test_whisper.py
+
+# Test with microphone
+python test_client.py
+
+# Test with microphone (verbose)
+python test_client.py --microphone
+```
+
+## WebSocket API
+
+### Connection
+
+Connect to `ws://localhost:8000/transcribe`
+
+### Message Format
+
+The server expects raw audio bytes sent directly via WebSocket.
+
+### Response Format
+
+```json
+{
+  "type": "transcription",
+  "text": "transcribed text",
+  "is_final": true,
+  "confidence": 0.95,
+  "language": "en",
+  "processing_time": 0.5,
+  "timestamp": 1234567890.123,
+  "partial": false,
+  "speaker": 1,
+  "lines": [...],
+  "buffer_transcription": "",
+  "buffer_diarization": "",
+  "segment_id": "session-1234567890-123"
+}
+```
+
+### Special Messages
+
+- `ready_to_stop`: Sent when processing is complete
+- `connection_established`: Sent when WebSocket connection is established
+
+## Client Example
+
+```python
+import asyncio
+import websockets
+import pyaudio
+
+async def transcribe_audio():
+    async with websockets.connect('ws://localhost:8000/transcribe') as websocket:
+        # Send raw audio bytes
+        audio_data = b'...'  # Your audio data
+        await websocket.send(audio_data)
+        
+        # Receive transcription
+        response = await websocket.recv()
+        data = json.loads(response)
+        print(f"Transcription: {data['text']}")
+```
+
+## Deployment
+
+### CapRover Deployment
+
+1. Ensure your `captain-definition` file is configured
+2. Deploy to CapRover using the provided script:
+
+```bash
+./deploy-simple.sh
+```
+
+### Docker Deployment
+
+```bash
+# Build image
+docker build -t whispercaprover .
+
+# Run container
+docker run -p 8000:8000 whispercaprover
+```
+
+## Models
+
+Available Whisper models:
+- `tiny` - Fastest, least accurate
+- `base` - Good balance (default)
+- `small` - Better accuracy
+- `medium` - High accuracy
+- `large` - Best accuracy, slowest
+
+## Performance
+
+- **Latency**: ~200-500ms for real-time transcription
+- **Memory**: Varies by model size (tiny: ~1GB, large: ~10GB)
+- **CPU**: Moderate usage, benefits from GPU acceleration
+- **Concurrent Sessions**: Limited by available memory
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Import Error**: Ensure WhisperLiveKit is installed
    ```bash
-   # Build and push to registry
-   docker build -t your-registry/whispercaprover-server .
-   docker push your-registry/whispercaprover-server
+   pip install whisperlivekit
    ```
 
-## 📊 Performance
+2. **Audio Issues**: Check microphone permissions and audio format
+   - Sample rate: 16kHz
+   - Format: 16-bit PCM
+   - Channels: Mono
 
-- **Latency:** 200-800ms for real-time transcription
-- **Streaming:** True word-by-word output
-- **Concurrent Sessions:** Configurable via environment
-- **Model Loading:** Automatic model download and caching
+3. **Memory Issues**: Use smaller models for limited resources
+   ```bash
+   export WHISPER_MODEL=tiny
+   ```
 
-## 🔗 Integration
+4. **Performance Issues**: Enable GPU acceleration if available
+   ```bash
+   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu118
+   ```
 
-This server is designed to work with the `whispercaprover-client` for complete real-time transcription solutions.
+### Logs
 
-## 🚀 Deployment
+Check server logs for detailed error information:
+```bash
+python server.py 2>&1 | tee server.log
+```
 
-This project includes simple deployment options:
-- **Local development** - Run with Python directly
-- **Docker deployment** - Build and run with Docker
-- **CapRover deployment** - Deploy to production with one command
+## License
 
-**Last Updated:** 2024-12-30 - Simplified project structure 
+This project is licensed under the MIT License.
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests
+5. Submit a pull request
+
+## Acknowledgments
+
+- [WhisperLiveKit](https://github.com/QuentinFuxa/WhisperLiveKit) - Real-time streaming transcription
+- [OpenAI Whisper](https://github.com/openai/whisper) - Speech recognition model
+- [FastAPI](https://fastapi.tiangolo.com/) - Web framework 

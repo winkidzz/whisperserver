@@ -1,32 +1,16 @@
-# Core dependencies for real-time streaming
-websockets>=11.0
-numpy>=1.21.0
-soundfile>=0.12.0
+# Real-time WebSocket transcription with OpenAI Whisper and VAD
+openai-whisper
+webrtcvad
 
-# FastAPI for CapRover deployment
-fastapi>=0.100.0
-uvicorn[standard]>=0.20.0
+# Web framework and WebSocket support
+fastapi
+uvicorn[standard]
+websockets
 
-# Real-time streaming with WhisperLive
-whisper-live>=0.7.1
-faster-whisper>=1.1.0
+# Audio processing and data handling
+numpy
+sounddevice
 
-# PyTorch for WhisperLive
-torch>=2.0.0
-torchaudio>=2.0.0
-
-# ONNX Runtime for optimized inference
-onnxruntime>=1.20.0
-
-# WebSocket client for WhisperLive
-websocket-client>=1.6.0
-
-# Audio processing
-librosa>=0.9.0
-PyAudio>=0.2.11
-
-# Additional utilities
-aiohttp>=3.8.0
-
-# Testing dependencies
-requests>=2.25.0 
+# PyTorch for Whisper
+torch
+torchaudio 

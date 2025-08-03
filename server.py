@@ -1,404 +1,482 @@
 #!/usr/bin/env python3
 """
-WhisperCapRover Server - Real-time Audio Transcription
-Provides true streaming transcription with word-by-word output using WhisperLive
+WhisperCapRover Server - Real-time WebSocket Transcription
+Robust, production-ready speech-to-text using OpenAI Whisper with VAD
 """
 
 import asyncio
 import json
-import base64
-import numpy as np
-import time
+import queue
+import threading
+import collections
 import logging
 import os
-from typing import Dict, Any, Optional
-from dataclasses import dataclass
-from collections import deque
-import threading
-import queue
+from typing import Deque, Optional
 
-# FastAPI imports for CapRover deployment
+import numpy as np
+import webrtcvad
+import whisper
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse
 import uvicorn
 
-# Import WhisperLive for true streaming
-try:
-    from whisper_live.client import TranscriptionClient
-    WHISPERLIVE_AVAILABLE = True
-    logging.info("WhisperLive library available - streaming transcription enabled")
-except ImportError as e:
-    WHISPERLIVE_AVAILABLE = False
-    logging.error(f"WhisperLive library not available: {e}")
-    raise RuntimeError("WhisperLive streaming is required but not available. Please install whisper-live library.")
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('logs/server.log', mode='a'),
+        logging.StreamHandler()
+    ]
+)
 logger = logging.getLogger(__name__)
 
-@dataclass
-class StreamingTranscriptionResult:
-    """Represents a streaming transcription result."""
-    text: str
-    is_final: bool
-    confidence: float
-    language: str
-    processing_time: float
-    timestamp: float
-    words: list = None
-    partial: bool = False
+class WhisperWebSocketTranscriber:
+    """Real-time WebSocket transcriber using OpenAI Whisper with VAD."""
+    
+    def __init__(self, model_name="base", sample_rate=16000, chunk_ms=30):
+        """
+        Initialize the transcriber.
+        
+        Args:
+            model_name: Whisper model size ('tiny', 'base', 'small', 'medium', 'large')
+            sample_rate: Audio sample rate in Hz
+            chunk_ms: Duration of each audio chunk in milliseconds
+        """
+        logger.info(f"Initializing WhisperWebSocketTranscriber with model: {model_name}")
+        
+        # Load Whisper model
+        logger.info(f"Loading Whisper model: {model_name}")
+        self.model = whisper.load_model(model_name)
+        logger.info(f"Whisper model {model_name} loaded successfully")
+        
+        # Audio processing parameters
+        self.sr = sample_rate
+        self.chunk_size = int(sample_rate * chunk_ms / 1000)
+        self.chunk_ms = chunk_ms
+        
+        # VAD setup
+        self.vad = webrtcvad.Vad(2)  # Aggressiveness level 2 (0-3)
+        logger.info("VAD initialized with aggressiveness level 2")
+        
+        # Audio buffering
+        self.audio_queue = queue.Queue()
+        self.speech_flags: Deque[bool] = collections.deque(maxlen=30)
+        self.min_segment_ms = 500  # Minimum speech segment duration
+        self.current_segment = []
+        self.last_emit = ""
+        
+        # Threading control
+        self._running = False
+        self._worker_thread = None
+        
+        logger.info(f"Transcriber initialized - Sample rate: {sample_rate}Hz, Chunk size: {chunk_ms}ms")
 
-class WhisperCapRoverTranscriber:
-    """Real-time transcription using WhisperLive."""
-    
-    def __init__(self, model_name: str = "base"):
-        self.model_name = model_name
-        self.transcriber = None
-        self.audio_buffer = deque(maxlen=16000 * 5)  # 5 seconds buffer for streaming
-        self.is_processing = False
-        self.processing_thread = None
-        self.result_queue = queue.Queue()
-        self.last_transcription = ""
-        self.partial_text = ""
-        
-        # Initialize the transcriber
-        self._load_transcriber()
-    
-    def _load_transcriber(self):
-        """Load the WhisperLive transcriber."""
+    def put_bytes(self, data: bytes):
+        """Add audio bytes to the processing queue."""
         try:
-            logger.info(f"Loading WhisperLive model: {self.model_name}")
-            # Initialize WhisperLive client for real-time transcription
-            self.transcriber = TranscriptionClient(
-                host="localhost",
-                port=6006,
-                model=self.model_name,
-                lang="en"
-            )
-            logger.info("WhisperLive transcriber initialized successfully")
-                
+            pcm = np.frombuffer(data, dtype=np.int16)
+            if pcm.size > 0:
+                self.audio_queue.put(pcm)
+                logger.info(f"Added {len(data)} bytes ({pcm.size} samples) to queue")
         except Exception as e:
-            logger.error(f"Failed to load WhisperLive transcriber: {e}")
-            raise
-    
-    def add_audio(self, audio_data: bytes):
-        """Add audio data to the buffer for processing."""
-        # Convert bytes to numpy array
-        audio_array = np.frombuffer(audio_data, dtype=np.int16)
-        audio_float = audio_array.astype(np.float32) / 32768.0
-        
-        # Add to buffer
-        self.audio_buffer.extend(audio_float)
-        
-        # Start processing if not already running
-        if not self.is_processing:
-            self._start_processing()
-    
-    def _start_processing(self):
-        """Start the processing thread."""
-        if self.processing_thread is None or not self.processing_thread.is_alive():
-            self.is_processing = True
-            self.processing_thread = threading.Thread(target=self._process_audio_stream)
-            self.processing_thread.daemon = True
-            self.processing_thread.start()
-    
-    def _process_audio_stream(self):
-        """Process audio stream in background thread using WhisperLive streaming."""
-        if not WHISPERLIVE_AVAILABLE:
-            raise RuntimeError("WhisperLive streaming is required but not available.")
-        self._process_with_whisperlive()
-    
-    def _process_with_whisperlive(self):
-        """Process with WhisperLive for true streaming."""
-        try:
-            logger.info("Starting WhisperLive transcription process")
-            
-            # Connect to WhisperLive server
-            self.transcriber.connect()
-            
-            while self.is_processing:
-                if len(self.audio_buffer) >= 16000 * 2:  # 2 seconds of audio
-                    try:
-                        # Get audio chunk
-                        audio_chunk = np.array(list(self.audio_buffer)[-16000 * 2:])
-                        
-                        # Send audio to WhisperLive server
-                        start_time = time.time()
-                        result = self.transcriber.transcribe(audio_chunk)
-                        processing_time = time.time() - start_time
-                        
-                        if result and result.text.strip():
-                            text = result.text.strip()
-                            
-                            # Check if this is new content
-                            if text != self.last_transcription:
-                                # Create result
-                                transcription = StreamingTranscriptionResult(
-                                    text=text,
-                                    is_final=result.is_final,
-                                    confidence=result.confidence if hasattr(result, 'confidence') else 0.95,
-                                    language=result.language if hasattr(result, 'language') else "en",
-                                    processing_time=processing_time,
-                                    timestamp=time.time(),
-                                    partial=not result.is_final
-                                )
-                                
-                                # Add to result queue
-                                self.result_queue.put(transcription)
-                                
-                                # Update last transcription
-                                self.last_transcription = text
-                                
-                                logger.info(f"WhisperLive: '{text}' (final: {result.is_final}, time: {processing_time:.2f}s)")
-                        
-                    except Exception as e:
-                        logger.error(f"Error in WhisperLive processing: {e}")
-                    
-                    # Delay for streaming processing
-                    time.sleep(0.1)
-                else:
-                    time.sleep(0.05)
-                    
-        except Exception as e:
-            logger.error(f"Error in WhisperLive streaming: {e}")
-            raise RuntimeError(f"WhisperLive streaming failed: {e}")
-    
+            logger.error(f"Error processing audio bytes: {e}")
 
-    
-    def get_results(self) -> list:
-        """Get all available transcription results."""
-        results = []
-        while not self.result_queue.empty():
-            try:
-                results.append(self.result_queue.get_nowait())
-            except queue.Empty:
-                break
-        return results
-    
-    def stop(self):
-        """Stop the processing thread."""
-        self.is_processing = False
-        if self.processing_thread:
-            self.processing_thread.join(timeout=1.0)
-
-class WhisperCapRoverServer:
-    """FastAPI server for real-time transcription."""
-    
-    def __init__(self):
-        self.app = FastAPI(
-            title="WhisperCapRover Server",
-            description="Real-time audio transcription using WhisperLive",
-            version="1.0.0"
-        )
-        self.transcriber = None
-        self.active_sessions: Dict[str, Dict[str, Any]] = {}
-        self.setup_routes()
-    
-    def setup_routes(self):
-        """Setup FastAPI routes."""
-        
-        @self.app.get("/health")
-        async def health_check():
-            """Health check endpoint for CapRover."""
-            return JSONResponse({
-                "status": "healthy",
-                "timestamp": time.time(),
-                "service": "whispercaprover-server",
-                "model": os.getenv("WHISPER_MODEL", "base"),
-                "streaming_enabled": True,
-                "streaming_type": "word-by-word",
-                "active_sessions": len(self.active_sessions),
-                "version": "1.0.0"
-            })
-        
-        @self.app.get("/")
-        async def root():
-            """Root endpoint with service info."""
-            return JSONResponse({
-                "service": "WhisperCapRover Server",
-                "version": "1.0.0",
-                "description": "Real-time audio transcription using WhisperLive streaming",
-                "streaming_type": "word-by-word",
-                "streaming_required": True,
-                "endpoints": {
-                    "websocket": "/transcribe",
-                    "health": "/health",
-                    "docs": "/docs"
-                },
-                "model": os.getenv("WHISPER_MODEL", "base"),
-                "status": "running"
-            })
-        
-        @self.app.websocket("/transcribe")
-        async def websocket_endpoint(websocket: WebSocket):
-            """WebSocket endpoint for real-time transcription."""
-            await websocket.accept()
-            await self.handle_websocket(websocket)
-    
-    async def handle_websocket(self, websocket: WebSocket):
-        """Handle WebSocket connections."""
-        session_id = f"session-{int(time.time() * 1000)}"
-        client_address = websocket.client.host if websocket.client else "unknown"
-        
-        logger.info(f"New connection from {client_address}: {session_id}")
-        
-        # Initialize session
-        self.active_sessions[session_id] = {
-            "websocket": websocket,
-            "start_time": time.time(),
-            "audio_buffer": deque(maxlen=16000 * 5),
-            "last_transcription": None
-        }
-        
-        try:
-            # Send welcome message
-            welcome_msg = {
-                "type": "connection_established",
-                "session_id": session_id,
-                "message": "Connected to WhisperCapRover Server",
-                "streaming_type": "word-by-word"
-            }
-            await websocket.send_text(json.dumps(welcome_msg))
-            
-            # Handle messages
-            while True:
-                try:
-                    message = await websocket.receive_text()
-                    await self.handle_message(session_id, message)
-                except WebSocketDisconnect:
-                    break
-                    
-        except Exception as e:
-            logger.error(f"Error handling connection {session_id}: {e}")
-        finally:
-            # Cleanup session
-            if session_id in self.active_sessions:
-                del self.active_sessions[session_id]
-            logger.info(f"Session ended: {session_id}")
-    
-    async def handle_message(self, session_id: str, message: str):
-        """Handle incoming WebSocket messages."""
-        try:
-            data = json.loads(message)
-            msg_type = data.get("type")
-            
-            if msg_type == "start_session":
-                await self.handle_start_session(session_id, data)
-            elif msg_type == "audio_chunk":
-                await self.handle_audio_chunk(session_id, data)
-            elif msg_type == "end_session":
-                await self.handle_end_session(session_id, data)
-            else:
-                logger.warning(f"Unknown message type: {msg_type}")
-                
-        except json.JSONDecodeError:
-            logger.error(f"Invalid JSON message from {session_id}")
-        except Exception as e:
-            logger.error(f"Error handling message from {session_id}: {e}")
-    
-    async def handle_start_session(self, session_id: str, data: dict):
-        """Handle session start."""
-        logger.info(f"Session started: {session_id}")
-        
-        # Send session confirmation
-        response = {
-            "type": "session_started",
-            "session_id": session_id,
-            "timestamp": time.time(),
-            "streaming_type": "word-by-word"
-        }
-        await self.active_sessions[session_id]["websocket"].send_text(json.dumps(response))
-    
-    async def handle_audio_chunk(self, session_id: str, data: dict):
-        """Handle incoming audio chunk."""
-        try:
-            # Decode audio data
-            audio_base64 = data.get("data", "")
-            audio_data = base64.b64decode(audio_base64)
-            
-            # Add to transcriber
-            self.transcriber.add_audio(audio_data)
-            
-            # Check for transcription results
-            results = self.transcriber.get_results()
-            for result in results:
-                await self.send_transcription(session_id, result)
-                
-        except Exception as e:
-            logger.error(f"Error processing audio chunk: {e}")
-    
-    async def handle_end_session(self, session_id: str, data: dict):
-        """Handle session end."""
-        logger.info(f"Session ending: {session_id}")
-        
-        # Send session end confirmation
-        response = {
-            "type": "session_ended",
-            "session_id": session_id,
-            "timestamp": time.time()
-        }
-        await self.active_sessions[session_id]["websocket"].send_text(json.dumps(response))
-    
-    async def send_transcription(self, session_id: str, result: StreamingTranscriptionResult):
-        """Send transcription result to client."""
-        if session_id not in self.active_sessions:
+    def start(self, send_fn):
+        """Start the transcription worker thread."""
+        if self._running:
+            logger.warning("Transcriber already running")
             return
-        
-        try:
-            message = {
-                "type": "transcription",
-                "text": result.text,
-                "is_final": result.is_final,
-                "confidence": result.confidence,
-                "language": result.language,
-                "processing_time": result.processing_time,
-                "timestamp": result.timestamp,
-                "partial": result.partial,
-                "words": result.words,
-                "segment_id": f"{session_id}-{int(result.timestamp * 1000)}"
-            }
             
-            await self.active_sessions[session_id]["websocket"].send_text(json.dumps(message))
+        self._running = True
+        self._worker_thread = threading.Thread(target=self._worker, args=(send_fn,), daemon=True)
+        self._worker_thread.start()
+        logger.info("Transcription worker thread started")
+
+    def stop(self):
+        """Stop the transcription worker thread."""
+        self._running = False
+        if self._worker_thread:
+            self._worker_thread.join(timeout=1.0)
+        logger.info("Transcription worker thread stopped")
+
+    def _is_speech(self, chunk: np.ndarray) -> bool:
+        """Detect if audio chunk contains speech using VAD."""
+        try:
+            return self.vad.is_speech(chunk.tobytes(), self.sr)
+        except Exception as e:
+            logger.debug(f"VAD error: {e}")
+            return False
+
+    def _transcribe(self, pcm16: np.ndarray) -> str:
+        """Transcribe audio using Whisper."""
+        try:
+            # Convert to float32 and normalize
+            audio = pcm16.astype(np.float32) / 32767.0
+            
+            # Transcribe with Whisper
+            result = self.model.transcribe(
+                audio, 
+                language="en", 
+                task="transcribe", 
+                fp16=False
+            )
+            
+            text = result["text"].strip()
+            logger.info(f"Transcription: '{text}'")
+            return text
             
         except Exception as e:
-            logger.error(f"Error sending transcription to {session_id}: {e}")
-    
-    def initialize_transcriber(self):
-        """Initialize the Whisper transcriber."""
-        model_name = os.getenv("WHISPER_MODEL", "base")
-        logger.info(f"Initializing transcriber with model: {model_name}")
-        self.transcriber = WhisperCapRoverTranscriber(model_name=model_name)
+            logger.error(f"Transcription error: {e}")
+            return ""
 
-def main():
-    """Main function for CapRover deployment."""
-    # Get configuration from environment
-    host = os.getenv("HOST", "0.0.0.0")
-    port = int(os.getenv("PORT", "8000"))
-    log_level = os.getenv("LOG_LEVEL", "info").lower()
+    def _worker(self, send_fn):
+        """Main worker thread for processing audio and transcription."""
+        logger.info("Starting audio processing worker")
+        
+        # Debug mode: bypass VAD for testing
+        debug_mode = os.getenv("WHISPER_DEBUG", "false").lower() == "true"
+        # Force debug mode for testing
+        debug_mode = True
+        logger.info(f"DEBUG MODE: {debug_mode}")
+        if debug_mode:
+            logger.info("DEBUG MODE: VAD bypassed for testing")
+        
+        while self._running:
+            try:
+                # Get audio chunk from queue
+                logger.info("Worker: waiting for audio chunk...")
+                chunk = self.audio_queue.get(timeout=0.1)
+                logger.info(f"Worker: received chunk of {len(chunk)} samples")
+                
+                logger.info("About to check debug mode...")
+                try:
+                    if debug_mode:
+                        # Debug mode: treat all audio as speech
+                        speech = True
+                        logger.info("DEBUG: Treating chunk as speech")
+                    else:
+                        # Run VAD on chunk
+                        speech = self._is_speech(chunk)
+                    
+                    logger.info(f"Speech detection result: {speech}")
+                    
+                    self.speech_flags.append(speech)
+                except Exception as e:
+                    logger.error(f"Error in speech detection: {e}")
+                    import traceback
+                    logger.error(f"Speech detection traceback: {traceback.format_exc()}")
+                    speech = True  # Default to speech in case of error
+                    self.speech_flags.append(speech)
+                
+                if speech:
+                    # Add to current speech segment
+                    self.current_segment.append(chunk)
+                    logger.info("Speech detected, adding to segment")
+                    logger.info(f"Current segment size: {len(self.current_segment)} chunks")
+                    
+                    # In debug mode, process speech segments immediately after a certain size
+                    # Process immediately if segment is large enough (either by chunk count or total samples)
+                    total_samples = sum(len(chunk) for chunk in self.current_segment)
+                    logger.info(f"DEBUG MODE: Segment size: {len(self.current_segment)} chunks, Total samples: {total_samples}")
+                    if debug_mode and (len(self.current_segment) >= 10 or total_samples >= 16000):  # Process after 10 chunks or 1 second of audio
+                        logger.info("DEBUG MODE: Processing speech segment immediately")
+                        try:
+                            # Calculate segment duration
+                            dur_ms = len(self.current_segment) * 1000 * self.chunk_size // self.sr
+                            logger.info(f"DEBUG MODE: Processing speech segment: {dur_ms}ms")
+                            
+                            # Concatenate all chunks in the segment
+                            logger.info(f"Concatenating {len(self.current_segment)} chunks...")
+                            pcm = np.concatenate(self.current_segment)
+                            logger.info(f"Concatenated PCM size: {len(pcm)} samples")
+                            
+                            # Transcribe the segment
+                            logger.info("Starting transcription...")
+                            text = self._transcribe(pcm)
+                            logger.info(f"Transcription result: '{text}'")
+                            
+                            if text and text != self.last_emit:
+                                # Send transcription via WebSocket
+                                try:
+                                    logger.info("Sending transcription via WebSocket...")
+                                    asyncio.run(send_fn(text))
+                                    self.last_emit = text
+                                    logger.info(f"Sent transcription: '{text}'")
+                                except Exception as e:
+                                    logger.error(f"Error sending transcription: {e}")
+                                    import traceback
+                                    logger.error(f"Send transcription traceback: {traceback.format_exc()}")
+                            else:
+                                logger.info("No transcription or duplicate text, skipping send")
+                        except Exception as e:
+                            logger.error(f"Error processing speech segment: {e}")
+                            import traceback
+                            logger.error(f"Process segment traceback: {traceback.format_exc()}")
+                        
+                        # Clear the segment for next speech
+                        self.current_segment.clear()
+                        logger.info("Cleared speech segment")
+                    
+                    continue
+                
+                # Check if we just finished speaking (silence detected)
+                logger.info(f"Checking speech flags: {len(self.speech_flags)} flags, speech ratio: {sum(self.speech_flags) / len(self.speech_flags) if self.speech_flags else 0}")
+                if self.current_segment and sum(self.speech_flags) / len(self.speech_flags) < 0.3:
+                    # Calculate segment duration
+                    dur_ms = len(self.current_segment) * 1000 * self.chunk_size // self.sr
+                    logger.info(f"Silence detected, segment duration: {dur_ms}ms")
+                    
+                    if dur_ms >= self.min_segment_ms:
+                        logger.info(f"Processing speech segment: {dur_ms}ms")
+                        
+                        try:
+                            # Concatenate all chunks in the segment
+                            logger.info(f"Concatenating {len(self.current_segment)} chunks...")
+                            pcm = np.concatenate(self.current_segment)
+                            logger.info(f"Concatenated PCM size: {len(pcm)} samples")
+                            
+                            # Transcribe the segment
+                            logger.info("Starting transcription...")
+                            text = self._transcribe(pcm)
+                            logger.info(f"Transcription result: '{text}'")
+                            
+                            if text and text != self.last_emit:
+                                # Send transcription via WebSocket
+                                try:
+                                    logger.info("Sending transcription via WebSocket...")
+                                    asyncio.run(send_fn(text))
+                                    self.last_emit = text
+                                    logger.info(f"Sent transcription: '{text}'")
+                                except Exception as e:
+                                    logger.error(f"Error sending transcription: {e}")
+                                    import traceback
+                                    logger.error(f"Send transcription traceback: {traceback.format_exc()}")
+                            else:
+                                logger.info("No transcription or duplicate text, skipping send")
+                        except Exception as e:
+                            logger.error(f"Error processing speech segment: {e}")
+                            import traceback
+                            logger.error(f"Process segment traceback: {traceback.format_exc()}")
+                    
+                    # Clear the segment for next speech
+                    self.current_segment.clear()
+                    logger.info("Cleared speech segment")
+                    
+            except queue.Empty:
+                # No audio data, continue
+                continue
+            except Exception as e:
+                logger.error(f"Worker thread error: {e}")
+                import traceback
+                logger.error(f"Worker thread traceback: {traceback.format_exc()}")
+                continue
+        
+        logger.info("Audio processing worker stopped")
+
+# FastAPI application
+app = FastAPI(title="WhisperCapRover Server", version="2.0.0")
+
+@app.get("/")
+async def root():
+    """Root endpoint with basic info."""
+    return {"message": "WhisperCapRover Server", "version": "2.0.0"}
+
+@app.get("/health")
+async def health():
+    """Health check endpoint."""
+    return {"status": "healthy", "service": "whispercaprover"}
+
+@app.websocket("/ws/audio")
+async def websocket_endpoint(ws: WebSocket):
+    """WebSocket endpoint for real-time audio transcription."""
+    await ws.accept()
+    session_id = f"session-{int(asyncio.get_event_loop().time() * 1000)}"
     
-    # Validate log level
-    valid_levels = ["critical", "error", "warning", "info", "debug", "trace"]
-    if log_level not in valid_levels:
-        log_level = "info"
+    logger.info(f"New WebSocket connection: {session_id}")
     
-    # Verify WhisperLive is available before starting
-    if not WHISPERLIVE_AVAILABLE:
-        raise RuntimeError("WhisperLive streaming is required but not available. Cannot start server.")
+    # Initialize transcriber
+    model_name = os.getenv("WHISPER_MODEL", "base")
+    transcriber = WhisperWebSocketTranscriber(model_name=model_name)
     
-    # Create server
-    server = WhisperCapRoverServer()
-    server.initialize_transcriber()
+    # Define sender function for WebSocket
+    async def sender(text: str):
+        """Send transcription result via WebSocket."""
+        message = {
+            "type": "transcription",
+            "text": text,
+            "is_final": True,
+            "session_id": session_id,
+            "timestamp": asyncio.get_event_loop().time()
+        }
+        await ws.send_text(json.dumps(message))
     
-    # Start FastAPI server
-    logger.info(f"Starting WhisperCapRover Server on {host}:{port}")
-    logger.info("WhisperLive streaming enabled - word-by-word transcription")
-    uvicorn.run(
-        server.app,
-        host=host,
-        port=port,
-        log_level=log_level,
-        access_log=True
-    )
+    # Start transcription
+    transcriber.start(sender)
+    
+    try:
+        # Send welcome message
+        welcome_msg = {
+            "type": "connection_established",
+            "session_id": session_id,
+            "message": "Connected to WhisperCapRover Server",
+            "model": model_name,
+            "sample_rate": 16000,
+            "chunk_ms": 30
+        }
+        await ws.send_text(json.dumps(welcome_msg))
+        logger.info(f"Welcome message sent to {session_id}")
+        
+        # Process incoming audio
+        while True:
+            data = await ws.receive_bytes()
+            logger.info(f"Received {len(data)} bytes from WebSocket")
+            transcriber.put_bytes(data)
+            
+    except WebSocketDisconnect:
+        logger.info(f"WebSocket disconnected: {session_id}")
+    except Exception as e:
+        logger.error(f"WebSocket error in {session_id}: {e}")
+    finally:
+        transcriber.stop()
+        logger.info(f"Session {session_id} cleaned up")
+
+@app.get("/html", response_class=HTMLResponse)
+async def get_html():
+    """Serve the HTML client for testing."""
+    html_content = """
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>WhisperCapRover - Real-time Transcription</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+        .status { padding: 10px; margin: 10px 0; border-radius: 5px; }
+        .connected { background-color: #d4edda; color: #155724; }
+        .disconnected { background-color: #f8d7da; color: #721c24; }
+        .transcription { font-size: 18px; font-family: monospace; padding: 20px; background: #f8f9fa; border-radius: 5px; min-height: 100px; }
+        button { padding: 10px 20px; margin: 10px; border: none; border-radius: 5px; cursor: pointer; }
+        .start { background-color: #28a745; color: white; }
+        .stop { background-color: #dc3545; color: white; }
+    </style>
+</head>
+<body>
+    <h1>🎤 WhisperCapRover - Real-time Transcription</h1>
+    
+    <div id="status" class="status disconnected">Disconnected</div>
+    
+    <div>
+        <button id="startBtn" class="start" onclick="startRecording()">Start Recording</button>
+        <button id="stopBtn" class="stop" onclick="stopRecording()" disabled>Stop Recording</button>
+    </div>
+    
+    <h3>Live Transcription:</h3>
+    <div id="transcription" class="transcription">Click "Start Recording" and speak...</div>
+    
+    <script>
+        let ws = null;
+        let mediaRecorder = null;
+        let audioContext = null;
+        let processor = null;
+        
+        function updateStatus(message, isConnected) {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = 'status ' + (isConnected ? 'connected' : 'disconnected');
+        }
+        
+        function updateTranscription(text) {
+            document.getElementById('transcription').textContent = text;
+        }
+        
+        async function startRecording() {
+            try {
+                // Get microphone access
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                // Create WebSocket connection
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                ws = new WebSocket(`${protocol}//${window.location.host}/ws/audio`);
+                
+                ws.onopen = () => {
+                    updateStatus('Connected - Recording...', true);
+                    document.getElementById('startBtn').disabled = true;
+                    document.getElementById('stopBtn').disabled = false;
+                };
+                
+                ws.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'transcription' && data.text) {
+                        updateTranscription(data.text);
+                    }
+                };
+                
+                ws.onclose = () => {
+                    updateStatus('Disconnected', false);
+                    document.getElementById('startBtn').disabled = false;
+                    document.getElementById('stopBtn').disabled = true;
+                };
+                
+                // Set up audio processing
+                audioContext = new AudioContext({ sampleRate: 16000 });
+                const source = audioContext.createMediaStreamSource(stream);
+                
+                // Create script processor for downsampling
+                processor = audioContext.createScriptProcessor(4096, 1, 1);
+                
+                processor.onaudioprocess = (e) => {
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        const input = e.inputBuffer.getChannelData(0);
+                        // Convert to 16-bit PCM
+                        const pcm16 = new Int16Array(input.length);
+                        for (let i = 0; i < input.length; i++) {
+                            pcm16[i] = Math.max(-32768, Math.min(32767, input[i] * 32768));
+                        }
+                        ws.send(pcm16.buffer);
+                    }
+                };
+                
+                source.connect(processor);
+                processor.connect(audioContext.destination);
+                
+            } catch (error) {
+                console.error('Error starting recording:', error);
+                updateStatus('Error: ' + error.message, false);
+            }
+        }
+        
+        function stopRecording() {
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+            if (processor) {
+                processor.disconnect();
+                processor = null;
+            }
+            if (audioContext) {
+                audioContext.close();
+                audioContext = null;
+            }
+            updateStatus('Stopped', false);
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+        }
+    </script>
+</body>
+</html>
+    """
+    return HTMLResponse(content=html_content)
 
 if __name__ == "__main__":
-    main() # Test comment for caching
+    logger.info("Starting WhisperCapRover Server v2.0.0")
+    logger.info("WebSocket endpoint: ws://localhost:8000/ws/audio")
+    logger.info("HTML client: http://localhost:8000/html")
+    
+    uvicorn.run(
+        "server:app", 
+        host="0.0.0.0", 
+        port=8000, 
+        log_level="info"
+    ) 
