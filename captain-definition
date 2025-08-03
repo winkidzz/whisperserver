@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "dockerfilePath": "./Dockerfile.minimal",
+  "dockerfilePath": "./Dockerfile.optimized",
   "expose": [
     {
       "httpPort": 80,
@@ -16,8 +16,8 @@
     "WHISPER_CACHE_DIR": "/app/cache"
   },
   "caproverOneClickApp": {
-    "displayName": "WhisperCapRover Server (Minimal)",
-    "description": "Real-time audio transcription server with minimal footprint",
+    "displayName": "WhisperCapRover Server (Local Build)",
+    "description": "Real-time audio transcription server built locally",
     "repository": {
       "url": "https://gitlab.captain.ishworks.website/audio/whispercaprover.git",
       "branch": "main"
@@ -25,7 +25,7 @@
     "variables": [
       {
         "key": "WHISPER_MODEL",
-        "value": "small",
+        "value": "base",
         "description": "Whisper model size (tiny, base, small, medium, large)"
       },
       {
@@ -43,5 +43,5 @@
   "notExposeAsWebApp": false,
   "hasDefaultSubdomainSsl": true,
   "containerHttpPort": "80",
-  "description": "Real-time audio transcription server using OpenAI Whisper with minimal Docker image"
+  "description": "Real-time audio transcription server using OpenAI Whisper with local build"
 } 
