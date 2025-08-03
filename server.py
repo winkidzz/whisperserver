@@ -21,8 +21,11 @@ from fastapi.responses import HTMLResponse
 import uvicorn
 
 # Setup logging
+debug_mode = os.getenv("WHISPER_DEBUG", "false").lower() == "true"
+log_level = logging.DEBUG if debug_mode else logging.INFO
+
 logging.basicConfig(
-    level=logging.INFO,
+    level=log_level,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler('logs/server.log', mode='a'),
@@ -78,7 +81,7 @@ class WhisperWebSocketTranscriber:
             pcm = np.frombuffer(data, dtype=np.int16)
             if pcm.size > 0:
                 self.audio_queue.put(pcm)
-                logger.info(f"Added {len(data)} bytes ({pcm.size} samples) to queue")
+                logger.debug(f"Added {len(data)} bytes ({pcm.size} samples) to queue")
         except Exception as e:
             logger.error(f"Error processing audio bytes: {e}")
 
@@ -132,34 +135,41 @@ class WhisperWebSocketTranscriber:
 
     def _worker(self, send_fn):
         """Main worker thread for processing audio and transcription."""
-        logger.info("Starting audio processing worker")
+        logger.info("🎤 Starting audio processing worker")
         
         # Debug mode: bypass VAD for testing
         debug_mode = os.getenv("WHISPER_DEBUG", "false").lower() == "true"
         # Force debug mode for testing
         debug_mode = True
-        logger.info(f"DEBUG MODE: {debug_mode}")
+        logger.debug(f"DEBUG MODE: {debug_mode}")
         if debug_mode:
-            logger.info("DEBUG MODE: VAD bypassed for testing")
+            logger.debug("DEBUG MODE: VAD bypassed for testing")
+        
+        recording_started = False
         
         while self._running:
             try:
                 # Get audio chunk from queue
-                logger.info("Worker: waiting for audio chunk...")
+                logger.debug("Worker: waiting for audio chunk...")
                 chunk = self.audio_queue.get(timeout=0.1)
-                logger.info(f"Worker: received chunk of {len(chunk)} samples")
+                logger.debug(f"Worker: received chunk of {len(chunk)} samples")
                 
-                logger.info("About to check debug mode...")
+                # Mark recording as started when we receive first chunk
+                if not recording_started:
+                    logger.info("🎙️ Recording started")
+                    recording_started = True
+                
+                logger.debug("About to check debug mode...")
                 try:
                     if debug_mode:
                         # Debug mode: treat all audio as speech
                         speech = True
-                        logger.info("DEBUG: Treating chunk as speech")
+                        logger.debug("DEBUG: Treating chunk as speech")
                     else:
                         # Run VAD on chunk
                         speech = self._is_speech(chunk)
                     
-                    logger.info(f"Speech detection result: {speech}")
+                    logger.debug(f"Speech detection result: {speech}")
                     
                     self.speech_flags.append(speech)
                 except Exception as e:
@@ -172,43 +182,43 @@ class WhisperWebSocketTranscriber:
                 if speech:
                     # Add to current speech segment
                     self.current_segment.append(chunk)
-                    logger.info("Speech detected, adding to segment")
-                    logger.info(f"Current segment size: {len(self.current_segment)} chunks")
+                    logger.debug("Speech detected, adding to segment")
+                    logger.debug(f"Current segment size: {len(self.current_segment)} chunks")
                     
                     # In debug mode, process speech segments immediately after a certain size
                     # Process immediately if segment is large enough (either by chunk count or total samples)
                     total_samples = sum(len(chunk) for chunk in self.current_segment)
-                    logger.info(f"DEBUG MODE: Segment size: {len(self.current_segment)} chunks, Total samples: {total_samples}")
+                    logger.debug(f"DEBUG MODE: Segment size: {len(self.current_segment)} chunks, Total samples: {total_samples}")
                     if debug_mode and (len(self.current_segment) >= 10 or total_samples >= 16000):  # Process after 10 chunks or 1 second of audio
-                        logger.info("DEBUG MODE: Processing speech segment immediately")
+                        logger.debug("DEBUG MODE: Processing speech segment immediately")
                         try:
                             # Calculate segment duration
                             dur_ms = len(self.current_segment) * 1000 * self.chunk_size // self.sr
-                            logger.info(f"DEBUG MODE: Processing speech segment: {dur_ms}ms")
+                            logger.debug(f"DEBUG MODE: Processing speech segment: {dur_ms}ms")
                             
                             # Concatenate all chunks in the segment
-                            logger.info(f"Concatenating {len(self.current_segment)} chunks...")
+                            logger.debug(f"Concatenating {len(self.current_segment)} chunks...")
                             pcm = np.concatenate(self.current_segment)
-                            logger.info(f"Concatenated PCM size: {len(pcm)} samples")
+                            logger.debug(f"Concatenated PCM size: {len(pcm)} samples")
                             
                             # Transcribe the segment
-                            logger.info("Starting transcription...")
+                            logger.debug("Starting transcription...")
                             text = self._transcribe(pcm)
-                            logger.info(f"Transcription result: '{text}'")
+                            logger.debug(f"Transcription result: '{text}'")
                             
                             if text and text != self.last_emit:
                                 # Send transcription via WebSocket
                                 try:
-                                    logger.info("Sending transcription via WebSocket...")
+                                    logger.debug("Sending transcription via WebSocket...")
                                     asyncio.run(send_fn(text))
                                     self.last_emit = text
-                                    logger.info(f"Sent transcription: '{text}'")
+                                    logger.info(f"📝 Transcription: '{text}'")
                                 except Exception as e:
                                     logger.error(f"Error sending transcription: {e}")
                                     import traceback
                                     logger.error(f"Send transcription traceback: {traceback.format_exc()}")
                             else:
-                                logger.info("No transcription or duplicate text, skipping send")
+                                logger.debug("No transcription or duplicate text, skipping send")
                         except Exception as e:
                             logger.error(f"Error processing speech segment: {e}")
                             import traceback
@@ -216,44 +226,44 @@ class WhisperWebSocketTranscriber:
                         
                         # Clear the segment for next speech
                         self.current_segment.clear()
-                        logger.info("Cleared speech segment")
+                        logger.debug("Cleared speech segment")
                     
                     continue
                 
                 # Check if we just finished speaking (silence detected)
-                logger.info(f"Checking speech flags: {len(self.speech_flags)} flags, speech ratio: {sum(self.speech_flags) / len(self.speech_flags) if self.speech_flags else 0}")
+                logger.debug(f"Checking speech flags: {len(self.speech_flags)} flags, speech ratio: {sum(self.speech_flags) / len(self.speech_flags) if self.speech_flags else 0}")
                 if self.current_segment and sum(self.speech_flags) / len(self.speech_flags) < 0.3:
                     # Calculate segment duration
                     dur_ms = len(self.current_segment) * 1000 * self.chunk_size // self.sr
-                    logger.info(f"Silence detected, segment duration: {dur_ms}ms")
+                    logger.debug(f"Silence detected, segment duration: {dur_ms}ms")
                     
                     if dur_ms >= self.min_segment_ms:
-                        logger.info(f"Processing speech segment: {dur_ms}ms")
+                        logger.debug(f"Processing speech segment: {dur_ms}ms")
                         
                         try:
                             # Concatenate all chunks in the segment
-                            logger.info(f"Concatenating {len(self.current_segment)} chunks...")
+                            logger.debug(f"Concatenating {len(self.current_segment)} chunks...")
                             pcm = np.concatenate(self.current_segment)
-                            logger.info(f"Concatenated PCM size: {len(pcm)} samples")
+                            logger.debug(f"Concatenated PCM size: {len(pcm)} samples")
                             
                             # Transcribe the segment
-                            logger.info("Starting transcription...")
+                            logger.debug("Starting transcription...")
                             text = self._transcribe(pcm)
-                            logger.info(f"Transcription result: '{text}'")
+                            logger.debug(f"Transcription result: '{text}'")
                             
                             if text and text != self.last_emit:
                                 # Send transcription via WebSocket
                                 try:
-                                    logger.info("Sending transcription via WebSocket...")
+                                    logger.debug("Sending transcription via WebSocket...")
                                     asyncio.run(send_fn(text))
                                     self.last_emit = text
-                                    logger.info(f"Sent transcription: '{text}'")
+                                    logger.info(f"📝 Transcription: '{text}'")
                                 except Exception as e:
                                     logger.error(f"Error sending transcription: {e}")
                                     import traceback
                                     logger.error(f"Send transcription traceback: {traceback.format_exc()}")
                             else:
-                                logger.info("No transcription or duplicate text, skipping send")
+                                logger.debug("No transcription or duplicate text, skipping send")
                         except Exception as e:
                             logger.error(f"Error processing speech segment: {e}")
                             import traceback
@@ -261,7 +271,7 @@ class WhisperWebSocketTranscriber:
                     
                     # Clear the segment for next speech
                     self.current_segment.clear()
-                    logger.info("Cleared speech segment")
+                    logger.debug("Cleared speech segment")
                     
             except queue.Empty:
                 # No audio data, continue
@@ -272,7 +282,7 @@ class WhisperWebSocketTranscriber:
                 logger.error(f"Worker thread traceback: {traceback.format_exc()}")
                 continue
         
-        logger.info("Audio processing worker stopped")
+        logger.info("🛑 Audio processing worker stopped")
 
 # FastAPI application
 app = FastAPI(title="WhisperCapRover Server", version="2.0.0")
@@ -293,7 +303,7 @@ async def websocket_endpoint(ws: WebSocket):
     await ws.accept()
     session_id = f"session-{int(asyncio.get_event_loop().time() * 1000)}"
     
-    logger.info(f"New WebSocket connection: {session_id}")
+    logger.info(f"🔗 New WebSocket connection: {session_id}")
     
     # Initialize transcriber
     model_name = os.getenv("WHISPER_MODEL", "base")
@@ -325,21 +335,21 @@ async def websocket_endpoint(ws: WebSocket):
             "chunk_ms": 30
         }
         await ws.send_text(json.dumps(welcome_msg))
-        logger.info(f"Welcome message sent to {session_id}")
+        logger.debug(f"Welcome message sent to {session_id}")
         
         # Process incoming audio
         while True:
             data = await ws.receive_bytes()
-            logger.info(f"Received {len(data)} bytes from WebSocket")
+            logger.debug(f"Received {len(data)} bytes from WebSocket")
             transcriber.put_bytes(data)
             
     except WebSocketDisconnect:
-        logger.info(f"WebSocket disconnected: {session_id}")
+        logger.info(f"🔌 WebSocket disconnected: {session_id}")
     except Exception as e:
         logger.error(f"WebSocket error in {session_id}: {e}")
     finally:
         transcriber.stop()
-        logger.info(f"Session {session_id} cleaned up")
+        logger.info(f"🧹 Session {session_id} cleaned up")
 
 @app.get("/html", response_class=HTMLResponse)
 async def get_html():
