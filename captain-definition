@@ -1,6 +1,5 @@
 {
   "schemaVersion": 2,
-  "imageName": "ishworksregistry.captain.ishworks.website/whispercaprover:latest",
   "expose": [
     {
       "httpPort": 80,
@@ -10,7 +9,7 @@
   "environmentVariables": {
     "WHISPER_MODEL": "base",
     "HOST": "0.0.0.0",
-    "PORT": "8000",
+    "PORT": "80",
     "LOG_LEVEL": "info",
     "MAX_CONNECTIONS": "10",
     "WHISPER_CACHE_DIR": "/app/cache"
