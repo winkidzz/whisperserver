@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "dockerfilePath": "./Dockerfile.optimized",
+  "imageName": "winkidzz/whispercaprover:latest",
   "expose": [
     {
       "httpPort": 80,
@@ -16,8 +16,8 @@
     "WHISPER_CACHE_DIR": "/app/cache"
   },
   "caproverOneClickApp": {
-    "displayName": "WhisperCapRover Server (Local Build)",
-    "description": "Real-time audio transcription server built locally",
+    "displayName": "WhisperCapRover Server (Docker Hub)",
+    "description": "Real-time audio transcription server from Docker Hub",
     "repository": {
       "url": "https://gitlab.captain.ishworks.website/audio/whispercaprover.git",
       "branch": "main"
@@ -43,5 +43,5 @@
   "notExposeAsWebApp": false,
   "hasDefaultSubdomainSsl": true,
   "containerHttpPort": "80",
-  "description": "Real-time audio transcription server using OpenAI Whisper with local build"
+  "description": "Real-time audio transcription server using OpenAI Whisper from Docker Hub"
 } 
