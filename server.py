@@ -480,13 +480,17 @@ async def get_html():
     return HTMLResponse(content=html_content)
 
 if __name__ == "__main__":
+    # Get configuration from environment variables
+    host = os.getenv("HOST", "0.0.0.0")
+    port = int(os.getenv("PORT", "8000"))
+    
     logger.info("Starting WhisperCapRover Server v2.0.0")
-    logger.info("WebSocket endpoint: ws://localhost:8000/ws/audio")
-    logger.info("HTML client: http://localhost:8000/html")
+    logger.info(f"WebSocket endpoint: ws://localhost:{port}/ws/audio")
+    logger.info(f"HTML client: http://localhost:{port}/html")
     
     uvicorn.run(
         "server:app", 
-        host="0.0.0.0", 
-        port=8000, 
+        host=host, 
+        port=port, 
         log_level="info"
     ) 
